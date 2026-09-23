@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>領収書・請求書のご確認｜GTNET</title>
+<!--
+  GTNET 電子領収書システム ― お客様ページ（静的ページ版）
+  【2026-09-23 新設】receipt-nippo-system の Customer.html を移植したもの。
+
+  なぜ静的ページか：
+    Android の Chrome は、Googleにログインしている端末で script.google.com/…/exec を開くと
+    URL に /u/N/ を差し込み、別アカウントの文脈で開こうとして表示できないことがある。
+    このページ（github.io）から fetch で GAS を呼ぶと Cookie が送られないため、その問題が起きない。
+
+  ★このリポジトリは公開。鍵・シートID・個人情報は絶対に置かないこと。
+    API（外部公開デプロイの /exec）はすでにQRで公開しているURLなので置いてよい。
+  ★fetch に credentials を付けない（付けると Cookie が送られ、問題が戻る）。
+  ★POST の Content-Type は text/plain（application/json にするとプリフライトで失敗する）。
+  ★成否は HTTP ステータスではなく、JSON の ok で判定する（GASはエラー時にHTMLを200で返すことがある）。
+-->
+<style>
+  :root { --navy:#1F3A5F; --lblue:#D9E2EC; --lgray:#F2F2F2; --gray:#595959; --brown:#854F0B; }
+  * { box-sizing:border-box; }
+  body { font-family:"Yu Gothic","Hiragino Sans","Noto Sans JP",sans-serif; margin:0; background:#f4f5f7; color:#222; }
+  .wrap { max-width:520px; margin:0 auto; background:#fff; min-height:100vh; }
+  .head { background:var(--navy); color:#fff; padding:16px 18px; }
+  .head .t { font-size:16px; font-weight:600; }
+  .head .c { font-size:12px; color:var(--lblue); margin-top:2px; min-height:1em; }
+  .body { padding:16px 16px 40px; }
+
+  .to { font-size:15px; margin-bottom:4px; }
+  .to b { font-size:19px; }
+  .lead { font-size:12.5px; color:var(--gray); line-height:1.8; margin:0 0 16px; }
+
+  .info { background:var(--lgray); border-radius:8px; padding:10px 13px; margin-bottom:14px; font-size:12px; }
+  .info .k { font-size:11px; color:var(--gray); }
+  .info .v { font-size:13.5px; color:var(--navy); font-weight:600; }
+
+  .sec { font-size:12px; color:var(--gray); margin:18px 0 8px; }
+
+  .rc { border:1px solid var(--lblue); border-radius:10px; overflow:hidden; margin-bottom:14px; }
+  .rc .cap { background:#F7FAFD; border-bottom:1px solid var(--lblue); padding:8px 13px;
+             font-size:12px; color:var(--navy); display:flex; justify-content:space-between; gap:8px; }
+  .rc .cap .no { opacity:.85; }
+  .rc .in { padding:15px 14px; }
+
+  .amt { text-align:center; padding:4px 0 12px; border-bottom:1px dashed #e2e6ec; margin-bottom:12px; }
+  .amt .k { font-size:11.5px; color:var(--gray); letter-spacing:.06em; }
+  .amt .v { font-size:32px; font-weight:700; color:var(--navy); line-height:1.3; margin-top:2px; }
+  .amt .msg { display:inline-block; margin-top:7px; font-size:12.5px; color:#245c37;
+              background:#E8F4EA; border-radius:999px; padding:4px 13px; }
+
+  dl.meta { margin:0 0 4px; font-size:12.5px; }
+  dl.meta div { display:flex; gap:10px; padding:4px 0; border-bottom:1px dotted #e2e6ec; }
+  dl.meta div:last-child { border-bottom:0; }
+  dl.meta dt { margin:0; width:5.8em; flex:none; color:var(--gray); }
+  dl.meta dd { margin:0; flex:1; }
+
+  .btn { display:block; width:100%; text-align:center; font-size:14px; padding:11px 10px;
+         border-radius:6px; border:none; cursor:pointer; margin-top:12px; font-family:inherit; }
+  .btn.fill { background:var(--navy); color:#fff; font-weight:600; }
+  .btn.line { background:#fff; color:var(--navy); border:1px solid var(--navy); }
+  .btn:disabled { opacity:.55; cursor:default; }
+
+  .memo { font-size:11.5px; line-height:1.7; border-radius:6px; padding:9px 11px; margin-top:10px; }
+  .memo.info { background:#E6F1FB; color:#185FA5; }
+
+  .card { border:1px solid #ddd; border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+  .card .num { font-size:14px; font-weight:600; }
+  .card .meta2 { font-size:12px; color:var(--gray); margin:3px 0 4px; }
+  .empty { border:1px dashed #ccc; border-radius:8px; padding:16px; font-size:13px; color:var(--gray); text-align:center; line-height:1.7; }
+  .safe { background:#E8F4EA; color:#2f7d4f; font-size:12px; padding:10px 12px; border-radius:6px; line-height:1.7; margin-top:18px; }
+  .foot { text-align:center; font-size:11px; color:#999; margin-top:18px; }
+  .toast { font-size:12px; color:#a12222; margin-top:6px; display:none; }
+
+  /* 読み込み中・エラー */
+  .state { text-align:center; padding:48px 16px; color:var(--gray); font-size:14px; line-height:1.8; }
+  .spin { width:34px; height:34px; border:3px solid var(--lblue); border-top-color:var(--navy);
+          border-radius:50%; margin:0 auto 14px; animation:sp 0.9s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .state .ic { font-size:40px; }
+  .state h2 { color:var(--navy); font-size:18px; margin:8px 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="t">領収書・請求書のご確認</div>
+      <div class="c" id="company"></div>
+    </div>
+    <div class="body" id="main">
+      <div class="state"><div class="spin"></div>読み込んでいます…</div>
+    </div>
+  </div>
+  <noscript><div class="state">このページを表示するには、JavaScript を有効にしてください。</div></noscript>
+
+<script>
+(function () {
+  'use strict';
+
+  // 外部公開デプロイの /exec（お客様ページとして発行済みQRに入っているものと同じURL）。
+  // ★「新しいデプロイ」を作るとこのURLが変わるので、GASの更新は必ず「デプロイを管理→鉛筆→新バージョン」で。
+  var API = 'https://script.google.com/macros/s/AKfycbzk4v36eymJycdrtTuZzzZohX-mW_uhrtj7AFQFQypU42YTb_-6CncOMuo2eeWGLscV3g/exec';
+
+  var TOKEN = new URLSearchParams(location.search).get('token') || '';
+  var main = document.getElementById('main');
+
+  // ---------- 通信（credentials は付けない） ----------
+  function readJson(res) {
+    return res.text().then(function (t) {
+      var j;
+      try { j = JSON.parse(t); } catch (e) { throw new Error('NETWORK'); }   // HTMLが返った＝失敗
+      if (!j.ok) { var er = new Error(j.error || 'ERROR'); er.code = j.error; throw er; }
+      return j;
+    });
+  }
+  function apiGet(params) {
+    return fetch(API + '?' + new URLSearchParams(params).toString()).then(readJson);
+  }
+  function apiPost(body) {
+    return fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body)
+    }).then(readJson);
+  }
+
+  // ---------- 画面部品（文字はすべて textContent で入れる＝HTMLとして解釈させない） ----------
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function metaRow(dl, k, v) {
+    if (!v) return;
+    var d = el('div'); d.appendChild(el('dt', '', k)); d.appendChild(el('dd', '', v)); dl.appendChild(d);
+  }
+
+  function showInvalid() {
+    main.innerHTML = '';
+    var s = el('div', 'state');
+    s.appendChild(el('div', 'ic', '🔒'));
+    s.appendChild(el('h2', '', 'リンクが無効です'));
+    s.appendChild(el('div', '', 'このリンクは無効か、有効期限が切れています。'));
+    s.appendChild(el('div', '', 'お手数ですが、ご利用の店舗までお問い合わせください。'));
+    main.appendChild(s);
+  }
+  function showNetErr() {
+    main.innerHTML = '';
+    var s = el('div', 'state');
+    s.appendChild(el('div', 'ic', '📶'));
+    s.appendChild(el('h2', '', '読み込めませんでした'));
+    s.appendChild(el('div', '', '通信状態の良い場所で、もう一度お試しください。'));
+    var b = el('button', 'btn line', 'もう一度読み込む');
+    b.addEventListener('click', function () { location.reload(); });
+    s.appendChild(b);
+    main.appendChild(s);
+  }
+
+  // ---------- PDF の保存 ----------
+  function b64ToBlob(b64, mime) {
+    var bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime || 'application/pdf' });
+  }
+  function triggerDownload(f) {
+    var url = URL.createObjectURL(b64ToBlob(f.b64, f.mimeType));
+    var a = document.createElement('a');
+    a.href = url; a.download = f.name || 'document.pdf';
+    document.body.appendChild(a); a.click();
+    // iPhone(Safari)は保存ではなくビューアで開く場合があります（そこから保存・共有できます）。
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1500);
+  }
+  function dlButton(label, cls, body) {
+    var wrap = el('div');
+    var b = el('button', 'btn ' + cls, label);
+    var t = el('div', 'toast');
+    b.addEventListener('click', function () {
+      b.disabled = true; b.textContent = '取得中…'; t.style.display = 'none';
+      apiPost(body).then(function (j) {
+        b.disabled = false; b.textContent = label; triggerDownload(j.file);
+      }).catch(function (e) {
+        b.disabled = false; b.textContent = label;
+        t.textContent = '⚠ ' + ((e && e.message && e.message !== 'NETWORK') ? e.message : '取得に失敗しました。もう一度お試しください。');
+        t.style.display = 'block';
+      });
+    });
+    wrap.appendChild(b); wrap.appendChild(t);
+    return wrap;
+  }
+
+  // ---------- 描画（Customer.html と同じ構成） ----------
+  function render(v) {
+    document.getElementById('company').textContent = v.company || '';
+    main.innerHTML = '';
+
+    var to = el('div', 'to');
+    to.appendChild(el('b', '', v.addressee || ''));
+    to.appendChild(document.createTextNode(' ' + (v.keisho || '様')));
+    main.appendChild(to);
+
+    var receipts = v.receipts || [];
+    var invoices = v.invoices || [];
+    if (receipts.length > 0) main.appendChild(el('p', 'lead', '下記の内容で領収したことをお知らせいたします。'));
+
+    // 伝票番号は「正しい番号に確定しているとき」だけ（仮番号は出さない）
+    if (v.showKey && v.denpyo) {
+      var info = el('div', 'info');
+      info.appendChild(el('div', 'k', v.keyLabel || '伝票番号'));
+      info.appendChild(el('div', 'v', v.denpyo));
+      main.appendChild(info);
+    }
+
+    if (receipts.length === 0) {
+      main.appendChild(el('div', 'sec', '領収書'));
+      main.appendChild(el('div', 'empty', '領収書はまだありません。'));
+    }
+    receipts.forEach(function (r) {
+      var rc = el('div', 'rc');
+      var cap = el('div', 'cap');
+      cap.appendChild(el('span', '', '領収書'));
+      cap.appendChild(el('span', 'no', 'No. ' + r.number));
+      rc.appendChild(cap);
+      var inn = el('div', 'in');
+      var amt = el('div', 'amt');
+      amt.appendChild(el('div', 'k', '領収金額（税込）'));
+      amt.appendChild(el('div', 'v', r.amountText));
+      amt.appendChild(el('div', 'msg', '上記の金額を領収いたしました'));
+      inn.appendChild(amt);
+      // 消費税の内訳は出さない（区分記載が求められるのは正本のPDF。二重に持つと食い違いの元）
+      var dl = el('dl', 'meta');
+      metaRow(dl, '但し書き', r.note);
+      metaRow(dl, '発行日', r.date);
+      metaRow(dl, 'お支払方法', r.payment);
+      metaRow(dl, '発行店舗', r.store);
+      inn.appendChild(dl);
+      inn.appendChild(dlButton('領収書PDFを保存', 'fill', { action: 'receiptPdf', token: TOKEN, num: r.number }));
+      inn.appendChild(el('div', 'memo info', 'この画面は領収の内容をお知らせするものです。'
+        + '会社へのご提出などで正式な領収書が必要な場合は、上のボタンからPDFを保存してください。'
+        + '消費税の内訳は保存したPDFに記載されています。'));
+      rc.appendChild(inn);
+      main.appendChild(rc);
+    });
+
+    if (invoices.length > 0) {
+      main.appendChild(el('div', 'sec', '請求書（' + invoices.length + '件）'));
+      invoices.forEach(function (iv, idx) {
+        var c = el('div', 'card');
+        c.appendChild(el('div', 'num', '請求書 ' + iv.label));
+        c.appendChild(el('div', 'meta2', iv.date));
+        c.appendChild(dlButton('請求書を保存', 'line', { action: 'invoicePdf', token: TOKEN, idx: idx }));
+        main.appendChild(c);
+      });
+    }
+
+    main.appendChild(el('div', 'safe', 'このページはお客様専用のリンクです。第三者への共有はお控えください。表示される書類は電子的に発行された正本です。'));
+    main.appendChild(el('div', 'foot', 'GTNET 電子領収書システム'));
+  }
+
+  // ---------- 起動 ----------
+  if (!TOKEN) { showInvalid(); return; }
+  apiGet({ api: 'customer', token: TOKEN })
+    .then(function (j) { render(j.v); })
+    .catch(function (e) { if (e && e.code === 'INVALID_TOKEN') showInvalid(); else showNetErr(); });
+})();
+</script>
+</body>
+</html>
