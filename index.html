@@ -76,6 +76,17 @@
   .foot { text-align:center; font-size:11px; color:#999; margin-top:18px; }
   .toast { font-size:12px; color:#a12222; margin-top:6px; display:none; }
 
+  /* 【2026-10-19】次回からの受け取り方 */
+  .pref { border:1.5px solid var(--navy); border-radius:10px; padding:14px; margin-top:18px; }
+  .pref .pt { font-size:14.5px; font-weight:600; color:var(--navy); }
+  .pref .pd { font-size:12.5px; color:var(--gray); line-height:1.7; margin:4px 0 10px; }
+  .pref label { display:block; font-size:12px; color:var(--gray); margin:10px 0 4px; }
+  .pref input { width:100%; font-size:16px; padding:10px; border:1px solid #c9d2dc; border-radius:6px; font-family:inherit; }
+  .pref .ph { font-size:11.5px; color:var(--gray); margin-top:4px; line-height:1.6; }
+  .pref .done { background:#E8F4EA; color:#245c37; border-radius:6px; padding:10px 12px; font-size:13px; line-height:1.7; }
+  .pref .lnk { background:none; border:none; color:var(--navy); text-decoration:underline; font-size:12.5px;
+               padding:0; margin-top:8px; cursor:pointer; font-family:inherit; }
+
   /* 読み込み中・エラー */
   .state { text-align:center; padding:48px 16px; color:var(--gray); font-size:14px; line-height:1.8; }
   .spin { width:34px; height:34px; border:3px solid var(--lblue); border-top-color:var(--navy);
@@ -257,8 +268,69 @@
       });
     }
 
+    if (v.pref && v.pref.show) main.appendChild(prefCard(v.pref));   // 【2026-10-19】次回からの受け取り方
+
     main.appendChild(el('div', 'safe', 'このページはお客様専用のリンクです。第三者への共有はお控えください。表示される書類は電子的に発行された正本です。'));
     main.appendChild(el('div', 'foot', 'GTNET 電子領収書システム'));
+  }
+
+  // ---------- 【2026-10-19 新設】次回からの受け取り方（GAS 66_receive_pref.gs） ----------
+  //   mode='new'        … メールアドレス（＋必要なら電話番号）を入れて登録
+  //   mode='registered' … 「設定済み」と、アドレスを変える入口だけ
+  //   LINE で受け取る は、保険システムのマイページとつなぐ準備ができてから足す。
+  function prefCard(p) {
+    var box = el('div', 'pref');
+    if (p.mode === 'registered') {
+      var d = el('div', 'done', '✅ 次回からメールで受け取る設定になっています（' + (p.emailMasked || '') + '）');
+      box.appendChild(d);
+      var chg = el('button', 'lnk', 'メールアドレスを変更する');
+      chg.addEventListener('click', function () { box.innerHTML = ''; prefForm(box, p, true); });
+      box.appendChild(chg);
+      return box;
+    }
+    prefForm(box, p, false);
+    return box;
+  }
+  function prefForm(box, p, isChange) {
+    box.appendChild(el('div', 'pt', isChange ? '📧 メールアドレスの変更' : '📧 次回からメールで受け取る'));
+    box.appendChild(el('div', 'pd', '次回のお会計から、領収書・請求書をメールでお送りします。紙やQRコードのお受け取りは不要になります。'));
+
+    box.appendChild(el('label', '', 'メールアドレス'));
+    var mail = el('input'); mail.type = 'email'; mail.autocomplete = 'email'; mail.placeholder = '例：tanaka@example.com';
+    box.appendChild(mail);
+
+    var tel = null;
+    if (p.askPhone) {
+      box.appendChild(el('label', '', 'お電話番号' + (p.phoneRequired ? '（必須）' : '（任意）')));
+      tel = el('input'); tel.type = 'tel'; tel.autocomplete = 'tel'; tel.placeholder = '例：09012345678';
+      box.appendChild(tel);
+      box.appendChild(el('div', 'ph', '次回のご来店のときに、お客様を見分けるために使います。ご来店の際は、このお電話番号をお伝えください。'));
+    } else if (p.phoneLast4) {
+      box.appendChild(el('div', 'ph', 'ご来店時にお伺いしたお電話番号（末尾 ' + p.phoneLast4 + '）で登録します。'));
+    }
+
+    var b = el('button', 'btn fill', isChange ? 'このアドレスに変更する' : 'メールで受け取る（登録する）');
+    var t = el('div', 'toast');
+    b.addEventListener('click', function () {
+      t.style.display = 'none';
+      var m = String(mail.value || '').replace(/[\s\u3000]/g, '');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m)) { t.textContent = '⚠ メールアドレスを正しく入力してください。'; t.style.display = 'block'; return; }
+      var ph = tel ? String(tel.value || '').trim() : '';
+      if (tel && p.phoneRequired && !ph) { t.textContent = '⚠ お電話番号を入力してください。'; t.style.display = 'block'; return; }
+      b.disabled = true; b.textContent = '登録しています…';
+      apiPost({ action: 'receivePref', token: TOKEN, email: m, phone: ph }).then(function (j) {
+        box.innerHTML = '';
+        var r = j.pref || {};
+        box.appendChild(el('div', 'done', '✅ 登録しました。次回から、領収書・請求書を ' + (r.emailMasked || 'ご登録のアドレス')
+          + ' にお送りします。確認のメールをお送りしましたので、届いているかご確認ください。'));
+        box.appendChild(el('div', 'ph', '確認のメールが届かない場合は、アドレスに誤りがないかご確認のうえ、このページからもう一度ご登録ください。'));
+      }).catch(function (e) {
+        b.disabled = false; b.textContent = isChange ? 'このアドレスに変更する' : 'メールで受け取る（登録する）';
+        t.textContent = '⚠ ' + ((e && e.message && e.message !== 'NETWORK') ? e.message : '登録できませんでした。通信状態の良い場所で、もう一度お試しください。');
+        t.style.display = 'block';
+      });
+    });
+    box.appendChild(b); box.appendChild(t);
   }
 
   // ---------- 起動 ----------
