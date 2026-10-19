@@ -86,6 +86,11 @@
   .pref .done { background:#E8F4EA; color:#245c37; border-radius:6px; padding:10px 12px; font-size:13px; line-height:1.7; }
   .pref .lnk { background:none; border:none; color:var(--navy); text-decoration:underline; font-size:12.5px;
                padding:0; margin-top:8px; cursor:pointer; font-family:inherit; }
+  /* 【2026-10-19②】次回からLINEで受け取る（LINEの緑はこのボタンだけ） */
+  .pref .lineblk { margin-top:16px; padding-top:14px; border-top:1px dashed #c9d2dc; }
+  .pref .lineblk.solo { margin-top:0; padding-top:0; border-top:0; }
+  .pref .pt.ln { color:#05A040; }
+  .btn.lineg { background:#06C755; color:#fff; font-weight:600; }
 
   /* 読み込み中・エラー */
   .state { text-align:center; padding:48px 16px; color:var(--gray); font-size:14px; line-height:1.8; }
@@ -277,19 +282,52 @@
   // ---------- 【2026-10-19 新設】次回からの受け取り方（GAS 66_receive_pref.gs） ----------
   //   mode='new'        … メールアドレス（＋必要なら電話番号）を入れて登録
   //   mode='registered' … 「設定済み」と、アドレスを変える入口だけ
-  //   LINE で受け取る は、保険システムのマイページとつなぐ準備ができてから足す。
+  //   LINE で受け取る は lineBlock（2026-10-19②・保険システム 返信書12）
+  //   mailHidden=true … メールで受け取ったページ（メールの欄は出さず、LINE だけ）【2026-10-19②】
+  //   line=true       … 在庫番号がある領収書。「次回からLINEで受け取る」を出す【2026-10-19②】
   function prefCard(p) {
     var box = el('div', 'pref');
-    if (p.mode === 'registered') {
-      var d = el('div', 'done', '✅ 次回からメールで受け取る設定になっています（' + (p.emailMasked || '') + '）');
-      box.appendChild(d);
-      var chg = el('button', 'lnk', 'メールアドレスを変更する');
-      chg.addEventListener('click', function () { box.innerHTML = ''; prefForm(box, p, true); });
-      box.appendChild(chg);
-      return box;
+    if (!p.mailHidden) {
+      var mw = el('div');
+      if (p.mode === 'registered') {
+        mw.appendChild(el('div', 'done', '✅ 次回からメールで受け取る設定になっています（' + (p.emailMasked || '') + '）'));
+        var chg = el('button', 'lnk', 'メールアドレスを変更する');
+        chg.addEventListener('click', function () { mw.innerHTML = ''; prefForm(mw, p, true); });
+        mw.appendChild(chg);
+      } else {
+        prefForm(mw, p, false);
+      }
+      box.appendChild(mw);
     }
-    prefForm(box, p, false);
+    if (p.line) box.appendChild(lineBlock(p));
     return box;
+  }
+
+  // 【2026-10-19②】次回からLINEで受け取る。押したときにサーバが保険システムへ問い合わせ、
+  //   「LINEで読むURL」（72時間・LINE連携にしか使えないキー）をもらって開く。
+  //   在庫番号はこのページに出さない・ブラウザから保険システムを直接呼ばない（返信書12 §2）。
+  function lineBlock(p) {
+    var w = el('div', 'lineblk' + (p.mailHidden ? ' solo' : ''));
+    w.appendChild(el('div', 'pt ln', '💬 次回からLINEで受け取る'));
+    w.appendChild(el('div', 'pd', 'GTNETのLINE公式アカウントと連携すると、LINEのメニュー「マイページ」から、領収書・請求書をいつでもご覧いただけます。'));
+    var label = 'LINEで受け取る（LINEを開く）';
+    var b = el('button', 'btn lineg', label);
+    var t = el('div', 'toast');
+    b.addEventListener('click', function () {
+      t.style.display = 'none'; b.disabled = true; b.textContent = 'LINEを準備しています…';
+      apiPost({ action: 'lineLink', token: TOKEN }).then(function (j) {
+        var u = (j.line && j.line.url) || '';
+        if (!/^https:\/\/liff\.line\.me\//.test(u)) throw new Error('NETWORK');
+        location.href = u;
+        setTimeout(function () { b.disabled = false; b.textContent = label; }, 3000);
+      }).catch(function (e) {
+        b.disabled = false; b.textContent = label;
+        t.textContent = '⚠ ' + ((e && e.message && e.message !== 'NETWORK') ? e.message : '通信できませんでした。通信状態の良い場所で、もう一度お試しください。');
+        t.style.display = 'block';
+      });
+    });
+    w.appendChild(b); w.appendChild(t);
+    return w;
   }
   function prefForm(box, p, isChange) {
     box.appendChild(el('div', 'pt', isChange ? '📧 メールアドレスの変更' : '📧 次回からメールで受け取る'));
